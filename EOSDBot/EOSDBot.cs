@@ -19,9 +19,6 @@ namespace EOSDBot
 
         private static readonly Size SUPPOSED_SIZE = new Size(384, 448);
 
-        const int BULLET_HEIGHT = 2;
-        const int DODGE_RISK = 10;
-
         private readonly IntPtr PTR_DEATHS = new IntPtr(0x0069BCC0);
         private readonly IntPtr PTR_X_POS = new IntPtr(0x006CAA68);
         private readonly IntPtr PTR_Y_POS = new IntPtr(0x006CAA6C);
@@ -34,9 +31,11 @@ namespace EOSDBot
         private Point first, second;
         private Rectangle screenRegion;
 
-        private int[] _columnCount;
-        private int _xGoal;
-        private string dir = "";
+        private Point _goalPoint = Point.Empty;
+        private const int DODGE_REGION = 4;
+        private static readonly int DODGE_BLOCK_WIDTH = SUPPOSED_SIZE.Width / DODGE_REGION;
+        private static readonly int DODGE_BLOCK_HEIGHT = SUPPOSED_SIZE.Height / DODGE_REGION;
+        private readonly int[,] _safetyBlocks = new int[DODGE_BLOCK_HEIGHT, DODGE_BLOCK_WIDTH];
 
         private void EOSDBot_Load(object sender, EventArgs e)
         {
@@ -67,18 +66,19 @@ namespace EOSDBot
             }
             Font font = new Font(FontFamily.GenericMonospace, 10);
             g.DrawString(px + ", " + py, font, Brushes.Black, 10, 10);
-            g.DrawString(dir, font, Brushes.Black, 10, 25);
+            g.DrawString(_goalPoint.ToString(), font, Brushes.Black, 10, 30);
             g.FillEllipse(Brushes.LawnGreen, px - 2, py - 2, 4, 4);
-            g.DrawLine(Pens.Red, _xGoal, 0, _xGoal, this.Height);
-            g.DrawLine(Pens.Blue, 0, py, this.Width, py);
-            if (_columnCount != null)
+
+            for (int y = 0; y < DODGE_BLOCK_HEIGHT; y++)
             {
-                for (int i = 0; i < screenData.Width; i++)
+                for (int x = 0; x < DODGE_BLOCK_WIDTH; x++)
                 {
-                    if (_columnCount[i] > BULLET_HEIGHT)
-                        g.DrawLine(Pens.Blue, i, 0, i, this.Height);
+                    if (_safetyBlocks[y, x] > BULLET_IGNORE)
+                        g.FillRectangle(Brushes.Blue, x * DODGE_REGION, y * DODGE_REGION, DODGE_REGION, DODGE_REGION);
                 }
             }
+            g.FillRectangle(Brushes.Crimson, _goalPoint.X, _goalPoint.Y, DODGE_REGION, DODGE_REGION);
+            g.DrawLine(Pens.Blue, 0, py, this.Width, py);
         }
 
         public void StartBot()
@@ -101,44 +101,52 @@ namespace EOSDBot
                     UpdateGoal();
 
                     Invalidate();
-                    Thread.Sleep(3);
+                    Thread.Sleep(2);
                 }
 
             }).Start();
 
             const double MOVE_EPSILON = 1;
-            const int FOCUS_DISTANCE = 2;
 
             // Motion control
             new Thread(() =>
             {
                 while (true)
                 {
-                    if (_columnCount != null)
+                    DInput.SendKey(0x2C, DInput.KEYEVENTF_SCANCODE);
+                    while (px - _goalPoint.X < -MOVE_EPSILON)
                     {
-                        DInput.SendKey(0x2C, DInput.KEYEVENTF_SCANCODE);
-                        dir = (px - _xGoal) + "";
-                        //if (Math.Abs(px - _xGoal) < FOCUS_DISTANCE)
-                        //    DInput.SendKey(0x2A, DInput.KEYEVENTF_SCANCODE);
-                        //else
-                        //    DInput.SendKey(0x2A, DInput.KEYEVENTF_KEYUP | DInput.KEYEVENTF_SCANCODE);
-                        while (px - _xGoal < -MOVE_EPSILON)
-                        {
-                            DInput.SendKey(0x4D, DInput.KEYEVENTF_SCANCODE);
-                            Thread.Sleep(1);
-                            UpdatePosition();
-                        }
-                        DInput.SendKey(0x4D, DInput.KEYEVENTF_KEYUP | DInput.KEYEVENTF_SCANCODE);
-                        
-                        while (px - _xGoal > MOVE_EPSILON)
-                        {
-                            DInput.SendKey(0x4B, DInput.KEYEVENTF_SCANCODE);
-                            Thread.Sleep(1);
-                            UpdatePosition();
-                        }
-                        DInput.SendKey(0x4B, DInput.KEYEVENTF_KEYUP | DInput.KEYEVENTF_SCANCODE);
+                        DInput.SendKey(0x4D, DInput.KEYEVENTF_SCANCODE);
+                        Thread.Sleep(1);
+                        UpdatePosition();
                     }
-                    Thread.Sleep(3);
+                    DInput.SendKey(0x4D, DInput.KEYEVENTF_KEYUP | DInput.KEYEVENTF_SCANCODE);
+
+                    while (px - _goalPoint.X > MOVE_EPSILON)
+                    {
+                        DInput.SendKey(0x4B, DInput.KEYEVENTF_SCANCODE);
+                        Thread.Sleep(1);
+                        UpdatePosition();
+                    }
+                    DInput.SendKey(0x4B, DInput.KEYEVENTF_KEYUP | DInput.KEYEVENTF_SCANCODE);
+
+                    while (py - _goalPoint.Y > MOVE_EPSILON)
+                    {
+                        DInput.SendKey(0x48, DInput.KEYEVENTF_SCANCODE);
+                        Thread.Sleep(1);
+                        UpdatePosition();
+                    }
+                    DInput.SendKey(0x48, DInput.KEYEVENTF_KEYUP | DInput.KEYEVENTF_SCANCODE);
+
+                    while (py - _goalPoint.Y < -MOVE_EPSILON)
+                    {
+                        DInput.SendKey(0x50, DInput.KEYEVENTF_SCANCODE);
+                        Thread.Sleep(1);
+                        UpdatePosition();
+                    }
+                    DInput.SendKey(0x50, DInput.KEYEVENTF_KEYUP | DInput.KEYEVENTF_SCANCODE);
+
+                    Thread.Sleep(2);
                 }
             }).Start();
 
@@ -173,70 +181,90 @@ namespace EOSDBot
             DInput.SendKey(0x2D, DInput.KEYEVENTF_KEYUP | DInput.KEYEVENTF_SCANCODE);
         }
 
+        const int BULLET_IGNORE = 5;
+        const int LOOK_UP = 7;
+        const int LOOK_BACK = 3;
+        const int LOOK_SIDES = 2;
+
         public void UpdateGoal()
         {
-            _xGoal = int.MaxValue;
-            bool clear = true;
-            for (int i = 0; i < screenData.Width; i++)
+            int cpx = (int)(px / DODGE_REGION);
+            int cpy = (int)(py / DODGE_REGION);
+            double minD = double.MaxValue;
+            int cax = 0;
+            int cay = 0;
+            bool empty = true;
+            for (int y = Math.Max(0, cpy - 20); y < Math.Min(cpy + 20, DODGE_BLOCK_HEIGHT); y++)
             {
-                if (_columnCount[i] > BULLET_HEIGHT)
+                for (int x = Math.Max(0, cpx - 20); x < Math.Min(cpx + 20, DODGE_BLOCK_WIDTH); x++)
                 {
-                    clear = false;
-                    break;
-                }
-            }
-            if (clear)
-            {
-                _xGoal = screenData.Width / 2;
-            }
-            else
-            {
-                int pcx = (int)px;
-                for (int x = 0; x < screenData.Width; x++)
-                {
-                    bool ok = true;
-                    for (int dx = -DODGE_RISK; dx < DODGE_RISK; dx++)
+                    int vl = _safetyBlocks[y, x];
+                    if (vl <= BULLET_IGNORE)
                     {
-                        if (x + dx > 0 && x + dx < screenData.Width)
+                        bool ok = true;
+                        for (int dy = -LOOK_UP; dy < LOOK_BACK; dy++)
                         {
-                            if (_columnCount[x + dx] > BULLET_HEIGHT)
+                            for (int dx = -LOOK_SIDES; dx < LOOK_SIDES; dx++)
                             {
-                                ok = false;
-                                break;
+                                if (y + dy >= 0 && y + dy < DODGE_BLOCK_HEIGHT && x + dx >= 0 &&
+                                    x + dx < DODGE_BLOCK_WIDTH)
+                                {
+                                    int dvl = _safetyBlocks[y + dy, x + dx];
+                                    if (dvl > BULLET_IGNORE)
+                                    {
+                                        ok = false;
+                                        goto end;
+                                    }
+                                }
+                            }
+                        }
+                        end:
+                        if (ok)
+                        {
+                            double d = Math.Sqrt((x - cpx)*(x - cpx) + (y - cpy)*(y - cpy));
+                            if (d < minD)
+                            {
+                                minD = d;
+                                cax = x;
+                                cay = y;
                             }
                         }
                         else
                         {
-                            ok = false;
-                            break;
+                            empty = false;
                         }
                     }
-                    if (ok && Math.Abs(pcx - x) < Math.Abs(pcx - _xGoal))
-                        _xGoal = x;
                 }
-                if (_xGoal == int.MaxValue)
-                    _xGoal = pcx;
+            }
+            
+            _goalPoint.X = cax * DODGE_REGION ;
+            _goalPoint.Y = cay * DODGE_REGION ;
+            if (empty)
+            {
+                _goalPoint.X = screenData.Width/2;
+                _goalPoint.Y = screenData.Height*4/5;
             }
         }
 
-        const int FORWARD_PEEK = 40;
-        const int BACKWARD_PEEK = 15;
         public unsafe void CalculateColumns()
         {
             BitmapData regionData = screenData.LockBits(new Rectangle(0, 0, screenData.Width, screenData.Height), ImageLockMode.ReadWrite, screenData.PixelFormat);
-            if (_columnCount == null)
-                _columnCount = new int[screenData.Width];
-            for (int x = 0; x < screenData.Width; x++)
+            for (int y = 0; y < DODGE_BLOCK_HEIGHT; y++)
             {
-                _columnCount[x] = 0;
-                for (int y = Math.Max(0, (int)py - FORWARD_PEEK); y < Math.Min(screenData.Height, (int)py + BACKWARD_PEEK); y++)
+                for (int x = 0; x < DODGE_BLOCK_WIDTH; x++)
                 {
-                    byte* data = (byte*)(regionData.Scan0 + y * regionData.Stride + x * 4);
-                    if (data[0] == 0)
+                    _safetyBlocks[y, x] = 0;
+
+                    for (int i = 0; i < DODGE_REGION; i++)
                     {
-                        _columnCount[x]++;
-                        if (_columnCount[x] > BULLET_HEIGHT)
-                            break;
+                        for (int j = 0; j < DODGE_REGION; j++)
+                        {
+                            byte* pix = (byte*)(regionData.Scan0 + (y * DODGE_REGION + i) * regionData.Stride + (x * DODGE_REGION + j) * 4);
+                            if (pix[0] == 0)
+                            {
+                                _safetyBlocks[y, x]++;
+                            }
+                        }
                     }
                 }
             }
@@ -265,7 +293,7 @@ namespace EOSDBot
                     int r = row[x * 4 + 2];
 
                     byte* pix = (byte*)(regionData.Scan0 + y * regionData.Stride + x * 4);
-                    if (GetBrightness(r, g, b) > 253)
+                    if (GetBrightness(r, g, b) > 254)
                     {
                         pix[0] = 0;
                         pix[1] = 0;
@@ -287,7 +315,7 @@ namespace EOSDBot
 
         public static double GetBrightness(int r, int g, int b)
         {
-            return (r + r + r + b + g + g + g + g) >> 3;
+            return (r + g + b) / 3.0;
         }
         private IKeyboardMouseEvents m_GlobalHook;
 
