@@ -30,9 +30,50 @@ namespace EOSDBot
                 g.CompositingMode = CompositingMode.SourceCopy;
                 g.CompositingQuality = CompositingQuality.HighSpeed;
                 g.SmoothingMode = SmoothingMode.None;
+                g.PixelOffsetMode = PixelOffsetMode.None;
                 g.DrawImage(bitmap, 0, 0, newSize.Width, newSize.Height);
             }
             return newBitmap;
+        }
+
+        public static Color AvgColor(Bitmap bm)
+        {
+            BitmapData srcData = bm.LockBits(
+            new Rectangle(0, 0, bm.Width, bm.Height),
+            ImageLockMode.ReadOnly,
+            PixelFormat.Format32bppArgb);
+
+            int stride = srcData.Stride;
+
+            IntPtr Scan0 = srcData.Scan0;
+
+            long[] totals = new long[] { 0, 0, 0 };
+
+            int width = bm.Width;
+            int height = bm.Height;
+
+            unsafe
+            {
+                byte* p = (byte*)(void*)Scan0;
+
+                for (int y = 0; y < height; y++)
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        for (int color = 0; color < 3; color++)
+                        {
+                            int idx = (y * stride) + x * 4 + color;
+
+                            totals[color] += p[idx];
+                        }
+                    }
+                }
+            }
+
+            int avgB = (int) (totals[0] / (width * height));
+            int avgG = (int) (totals[1] / (width * height));
+            int avgR = (int) (totals[2] / (width * height));
+            return Color.FromArgb(0, avgR, avgG, avgB);
         }
     }
 }
